@@ -9,3 +9,4 @@ How to Use:
 Notes and Troubleshooting:
 	- Tip #1
 	- TIp #2
+	- Tip #3
