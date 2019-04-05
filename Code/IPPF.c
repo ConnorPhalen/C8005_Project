@@ -87,8 +87,7 @@ int main(int argc, char **argv)
 
 		printf("%s - %s - %s - %s This Stuff \n", args->ip1, args->port1, args->ip2, args->port2);
 
-/* Uncomment when problem is figured out
-		if(pthread_create(newthread, NULL, &tprocess, (void *)&args) != 0) // make new thread to deal with each pairing
+		if(pthread_create(newthread, NULL, &tprocess, (void *)args) != 0) // make new thread to deal with each pairing
 		{
 			if(errno == EAGAIN)
 			{
@@ -96,7 +95,6 @@ int main(int argc, char **argv)
 				exit(1);		    		
 			}
 		}
-*/
 	}
 
 /* ---- Forwarding Setup ---- */
@@ -116,9 +114,15 @@ int main(int argc, char **argv)
 // Output - N/A
 void* tprocess(void *arguments)
 {
-	struct targs *targs = arguments; // arguments should be equal to what is printed off above, but it is getting weird
+	struct targs *targs = (struct targs*)arguments; // arguments should be equal to what is printed off above, but it is getting weird
 
-	printf("%s - %s - %s - %s This Stuff \n", targs->ip1, targs->port1, targs->ip2, targs->port2);
+	printf("%s - %s - %s - %s ^^^^ This Stuff \n", targs->ip1, targs->port1, targs->ip2, targs->port2);
+
+
+
+	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
+
+
 
 	while(1)
 	{
