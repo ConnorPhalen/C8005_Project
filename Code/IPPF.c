@@ -26,17 +26,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <strings.h>
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
-#include <arpa/inet.h>
 #include <pthread.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
 #include <sys/socket.h>
 
 #define CONF_FILE "IPP_Pairs.conf" // Contains IP-Port pairs
 #define BUFLEN 512
 #define SMALLBUF 16
+#define LISTEN_QUOTA 5
 
 /* ---- Function and struct Setup ---- */
 void* tprocess(void *arguments);
@@ -53,10 +56,10 @@ struct targs{
 int main(int argc, char **argv)
 {
 /* ---- Variable Setup ---- */
-	int i, maxi, nready;
-	int socket_desc, client_len; 	// Socket specific
+	//int i, maxi, nready;
+	//int socket_desc, l_client_len, r_client_len; 	// Socket specific
 
-	struct sockaddr_in server, client;
+	//struct sockaddr_in server, client;
 
 	FILE *fr; // For reading the related .conf file
 	char rbuf[BUFLEN];
@@ -116,17 +119,125 @@ void* tprocess(void *arguments)
 {
 	struct targs *targs = (struct targs*)arguments; // arguments should be equal to what is printed off above, but it is getting weird
 
+	int flags; // used for getting/setting flags on sockets
+	int l_sockd, r_sockd; // Socket variables
+	int sockpoint, l_client_len, r_client_len;
+	struct sockaddr_in l_server, l_client, r_server, r_client; // More Socket variables
+
 	printf("%s - %s - %s - %s ^^^^ This Stuff \n", targs->ip1, targs->port1, targs->ip2, targs->port2);
 
-
-
+/* ---- Left Port ---- */
 	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
+	fprintf(stdout, "Opening server on Port %ld\n", atol(targs->port1));
 
+	// Create socket
+	if((l_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+	{
+		// Error in Socket creation
+		perror("Socket failed to be created");
+		exit(1);
+	}
 
+	if (setsockopt(l_sockd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
+	{
+    	perror("setsockopt(SO_REUSEADDR) failed");
+	}
+
+	// Zero out and create memory for the server struct
+	bzero((char *)&l_server, sizeof(struct sockaddr_in));
+	l_server.sin_family = AF_INET;
+	l_server.sin_port = htons(atol(targs->port1));  // Flip the bits for the weird intel chip processing
+	l_server.sin_addr.s_addr = htonl(INADDR_ANY); // Accept addresses from anybody
+
+	// Bind new socket to port
+	if(bind(l_sockd, (struct sockaddr *)&l_server, sizeof(l_server)) == -1)
+	{
+		perror("Cannot bind to socket");
+		exit(1);
+	}
+/* ---- Right Port ---- */
+	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
+	fprintf(stdout, "Opening server on Port %ld\n", atol(targs->port2));
+
+	// Create socket
+	if((r_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+	{
+		// Error in Socket creation
+		perror("Socket failed to be created");
+		exit(1);
+	}
+
+	if (setsockopt(r_sockd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
+	{
+    	perror("setsockopt(SO_REUSEADDR) failed");
+	}
+
+	// Zero out and create memory for the server struct
+	bzero((char *)&r_server, sizeof(struct sockaddr_in));
+	r_server.sin_family = AF_INET;
+	r_server.sin_port = htons(atol(targs->port2));  // Flip the bits for the weird intel chip processing
+	r_server.sin_addr.s_addr = htonl(INADDR_ANY); // Accept addresses from anybody
+
+	// Bind new socket to port
+	if(bind(r_sockd, (struct sockaddr *)&r_server, sizeof(r_server)) == -1)
+	{
+		perror("Cannot bind to socket");
+		exit(1);
+	}
+
+/* ---- Set Socket Flags ---- */
+	if((flags = fcntl(l_sockd, F_GETFL, 0)) < 0) // Get Socket Descriptor flags
+	{
+		perror("Could not get Sock Desc Flags");
+		exit(1);
+	}
+	if(fcntl(l_sockd, F_SETFL, flags | O_NONBLOCK) < 0) // Set Socket Flag to Non-Block, OR new flag as to not override the other flags
+	{
+		perror("Could not set Sock Desc Flags");
+		exit(1);
+	}
+	if((flags = fcntl(r_sockd, F_GETFL, 0)) < 0) // Get Socket Descriptor flags
+	{
+		perror("Could not get Sock Desc Flags");
+		exit(1);
+	}
+	if(fcntl(r_sockd, F_SETFL, flags | O_NONBLOCK) < 0) // Set Socket Flag to Non-Block, OR new flag as to not override the other flags
+	{
+		perror("Could not set Sock Desc Flags");
+		exit(1);
+	}
+
+/* ---- Start Listening ---- */
+
+	listen(l_sockd, LISTEN_QUOTA);
+	listen(r_sockd, LISTEN_QUOTA);
 
 	while(1)
 	{
+		l_client_len = sizeof(l_client);
+		r_client_len = sizeof(r_client);
 
+		// accept new client 
+		if((sockpoint = accept4(l_sockd, (struct sockaddr *) &l_client, &l_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #1
+		{
+			printf("Uno\n");
+
+			// Splice data to other socket desc
+			
+		}
+
+		printf("Dos\n");
+
+		// accept new client 
+		if((sockpoint = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
+		{
+			printf("Tres\n");
+
+			// Splice data to other socket desc
+
+		}
+		printf("Quatro\n");
+	
 	}
 
 	return 0;
