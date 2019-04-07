@@ -20,7 +20,7 @@
 --
 --	NOTES:
 -- - Isaac mentioned a that this can be used for good performance: http://man7.org/linux/man-pages/man2/splice.2.html
--- - 
+-- - Can use tee() to duplicate data out of a socket, so we can essentially port forward from one sock to multiple if we want to
 ---------------------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -118,10 +118,13 @@ int main(int argc, char **argv)
 void* tprocess(void *arguments)
 {
 	struct targs *targs = (struct targs*)arguments; // arguments should be equal to what is printed off above, but it is getting weird
+	ssize_t ret_bytes, n; // returned bytes
+	char *bp, t_rbuf[BUFLEN];
+	int bytes_to_read;
 
 	int flags; // used for getting/setting flags on sockets
-	int l_sockd, r_sockd; // Socket variables
-	int sockpoint, l_client_len, r_client_len;
+	int l_sockd, r_sockd, new_sockd; // Socket variables
+	int l_client_len, r_client_len;
 	struct sockaddr_in l_server, l_client, r_server, r_client; // More Socket variables
 
 	printf("%s - %s - %s - %s ^^^^ This Stuff \n", targs->ip1, targs->port1, targs->ip2, targs->port2);
@@ -218,26 +221,67 @@ void* tprocess(void *arguments)
 		r_client_len = sizeof(r_client);
 
 		// accept new client 
-		if((sockpoint = accept4(l_sockd, (struct sockaddr *) &l_client, &l_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #1
+		if((new_sockd = accept4(l_sockd, (struct sockaddr *) &l_client, &l_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #1
 		{
-			printf("Uno\n");
+			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
 
-			// Splice data to other socket desc
+			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip1) == 0)
+			{
+				while((ret_bytes = splice(new_sockd, 0, r_sockd, 0, BUFLEN, 0)) != 0) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
+				{
+					// Keep splicing socket data until end of input
+					n += ret_bytes; // keep track of amount sent, could use later to send bulk amount
+				}
+				if(ret_bytes == -1)
+				{
+					perror("Spilce Failed");
+					// Could fail because one file desc here isn't a pipe
+					exit(1);
+				}
+			}
 			
 		}
 
 		printf("Dos\n");
 
 		// accept new client 
-		if((sockpoint = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
+		if((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
 		{
-			printf("Tres\n");
+			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
 
-			// Splice data to other socket desc
+			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0)
+			{
+				if((ret_bytes = splice(new_sockd, 0, l_sockd, 0, BUFLEN, 0)) == -1) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
+				{
+					perror("Spilce Failed");
+					// Could fail because one file desc here isn't a pipe
+					exit(1);
+				}
+			}
 
 		}
 		printf("Quatro\n");
 	
+/* Test Block *
+		if((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
+		{
+			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
+
+			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0)
+			{
+				bp = t_rbuf;
+				bytes_to_read = BUFLEN;
+				while ((n = read(r_sockd, bp, bytes_to_read)) > 0)
+				{
+					bp += n;
+					bytes_to_read -= n;
+				}
+				write(l_sockd, t_rbuf, BUFLEN);   // echo to client
+
+
+			}
+		}
+*/
 	}
 
 	return 0;
