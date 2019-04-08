@@ -11,8 +11,14 @@
 --
 --				April 1, 2019:
 --					- Initial Setup and GitHub Repo
---				April 2, 2019:
---					-
+--				April 4, 2019:
+--					- Set up .conf file and extract data from it
+--				April 5, 2019:
+--					- Thread Creation and Setup
+--				April 6, 2019:
+--					- Setup functions for sending data, then did a little error checking
+--				April 7, 2019:
+--					- Multi-Process for Actual Port Forwarding, then testing
 --
 --	DESIGNERS:		Connor Phalen and Greg Little
 --
@@ -20,7 +26,7 @@
 --
 --	NOTES:
 -- - Isaac mentioned a that this can be used for good performance: http://man7.org/linux/man-pages/man2/splice.2.html
--- - Can use tee() to duplicate data out of a socket, so we can essentially port forward from one sock to multiple if we want to
+-- - Splice() needs a pipe, so maybe we can use it in a cross-program thing
 --
 ---------------------------------------------------------------------------------------*/
 
@@ -38,7 +44,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
-#define CONF_FILE "IPP_Pairs.conf" // Contains IP-Port pairs
+#define CONF_FILE "IPP_Pairs.conf" // Contains Port-IP:Port pairs
 #define BUFLEN 1028
 #define SMALLBUF 16
 #define LISTEN_QUOTA 5
@@ -96,15 +102,15 @@ int main(int argc, char **argv)
 		pthread_t *newthread = calloc(1, sizeof(pthread_t)); // new thread for each line
 		struct targs *args 	 = calloc(1, sizeof(struct targs)); // each thread has a few of arguments
 
-		port1 = strtok(rbuf, "-"); // Port #1
-		token2 = strtok(NULL, "-"); // IP-Port Pair #2
+		port1 = strtok(rbuf, "-"); // Listening Port
+		token2 = strtok(NULL, "-"); // IP:Port pair to forward to
 
-		strcpy(args->port1, port1); // get Port 1
+		strcpy(args->port1, port1); // Get listen port
 
-		strcpy(args->ip, strtok(token2, ":")); // get IP 2
-		strcpy(args->port2, strtok(NULL, ":")); // get Port 2
+		strcpy(args->ip, strtok(token2, ":")); // get Forwarding IP
+		strcpy(args->port2, strtok(NULL, ":")); // get Forwarding Port
 
-		if(pthread_create(newthread, NULL, &tProcess, (void *)args) != 0) // make new thread to deal with each pairing
+		if(pthread_create(newthread, NULL, &tProcess, (void *)args) != 0) // make new thread to deal with each Port to forward
 		{
 			if(errno == EAGAIN)
 			{
@@ -114,7 +120,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-/* ---- Forwarding Setup ---- */
+/* ---- Tidy Up A Little ---- */
 	signal(SIGINT, sigHandler); // All Signal Interputs get pushed to sigintHandler
 	fclose(fr);
 	while(1)
@@ -146,19 +152,18 @@ int main(int argc, char **argv)
 ----------------------------------------------------------------------------------------------*/
 void* tProcess(void *arguments)
 {
-	struct targs *targs = (struct targs*)arguments; // arguments should be equal to what is printed off above, but it is getting weird
+	struct targs *targs = (struct targs*)arguments; // Store Passed in Thread Args
 	int server_sockd, forwarding_sockd, new_sockd; // Socket variables
 	struct sockaddr_in server_info, r_server; // More Socket variables
 
 /* ---- Server Port ---- */
-	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
 	fprintf(stdout, "Opening server on Port %ld\n", atol(targs->port1));
 
 	// Create socket
 	if((server_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 	{
 		// Error in Socket creation
-		perror("server Socket failed to be created");
+		perror("Server Socket failed to be created");
 		exit(1);
 	}
 
@@ -180,17 +185,17 @@ void* tProcess(void *arguments)
 		exit(1);
 	}
 	while(1){
-		listen(server_sockd, LISTEN_QUOTA);// cause we like the NSA over here
+		listen(server_sockd, LISTEN_QUOTA); // Listen to specific socket
 /* ---- End Server Port ---- */
 
 
-		new_sockd = accept(server_sockd,NULL,NULL); // accept the call coming from the server
+		new_sockd = accept(server_sockd,NULL,NULL);
 
 /* ---- Forwarding Port ---- */
 		if((forwarding_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 		{
 			// Error in Socket creation
-			perror("forwarding socket failed to be created");
+			perror("Forwarding socket failed to be created");
 			exit(1);
 		}
 
@@ -204,6 +209,7 @@ void* tProcess(void *arguments)
 		r_server.sin_family = AF_INET;
 		r_server.sin_port = htons(atol(targs->port2));  // Flip the bits for the weird intel chip processing
 		inet_aton(targs->ip, &r_server.sin_addr);
+
 		// Bind new socket to port
 		if(connect(forwarding_sockd, (struct sockaddr *)&r_server, sizeof(r_server)) == -1)
 		{
@@ -212,14 +218,12 @@ void* tProcess(void *arguments)
 		}
 /* ---- End Forwarding Port ---- */
 
-		if(fork() == 0){//ready to make a baby baby
-			if(fork() == 0 ){ // the baby had a baby omg how does this even happen :O
-				//younger child do work
-				readWrite(new_sockd,forwarding_sockd);//sends the data on one socket to the other
+		if(fork() == 0){ // Fork new process to do port forwarding
+			if(fork() == 0 ){ 
+				readWrite(new_sockd,forwarding_sockd); // Forwards from Client to Destination machine
 				exit(0);
 			}else{
-				// older child do work (father?)
-				readWrite(forwarding_sockd,new_sockd);//sends the data on other socket to the one
+				readWrite(forwarding_sockd,new_sockd); // Forwards from Destination Machine to Client
 				exit(0);
 			}
 			exit(0);
@@ -251,20 +255,20 @@ void readWrite(int src_sock,int dest_sock){
 	char buf[BUFLEN];
 	int a,j,i;
 
-	a = read(src_sock, buf, BUFLEN);
+	a = read(src_sock, buf, BUFLEN); // Read initial data
 
-	while (a > 0) {
+	while (a > 0) { // a == 0 is end of input
         i = 0;
 
         while (i < a) {
-            j = write(dest_sock, buf + i, a - i);
+            j = write(dest_sock, buf + i, a - i); // write data to other socket
 
             i += j;
         }
 
-        a = read(src_sock, buf, BUFLEN);
+        a = read(src_sock, buf, BUFLEN); // Keep reading data
 	}
-	close(src_sock);
+	close(src_sock); // close sockets
 	close(dest_sock);
 }
 
