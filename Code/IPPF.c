@@ -12,7 +12,7 @@
 --				April 1, 2019:
 --					- Initial Setup and GitHub Repo
 --				April 2, 2019:
---					- 
+--					-
 --
 --	DESIGNERS:		Connor Phalen and Greg Little
 --
@@ -33,20 +33,20 @@
 #include <signal.h>
 #include <pthread.h>
 #include <sys/types.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
 #define CONF_FILE "IPP_Pairs.conf" // Contains IP-Port pairs
-#define BUFLEN 512
+#define BUFLEN 1028
 #define SMALLBUF 16
 #define LISTEN_QUOTA 5
 
 /* ---- Function and struct Setup ---- */
 void* tprocess(void *arguments);
 void sigHandler(int sigNum);
-
+void readwrite(int src_sock_sock,int dest_sock);
 struct targs{
-	char ip1[SMALLBUF];
 	char port1[SMALLBUF];
 	char ip2[SMALLBUF];
 	char port2[SMALLBUF];
@@ -79,23 +79,22 @@ int main(int argc, char **argv)
 		pthread_t *newthread = calloc(1, sizeof(pthread_t)); // new thread for each line
 		struct targs *args 	 = calloc(1, sizeof(struct targs)); // each thread has a few of arguments
 
-		token1 = strtok(rbuf, "-"); // IP-Port Pair #1
+		token1 = strtok(rbuf, "-"); // Port #1
 		token2 = strtok(NULL, "-"); // IP-Port Pair #2
 
-		strcpy(args->ip1, strtok(token1, ":")); // get IP 1
-		strcpy(args->port1, strtok(NULL, ":")); // get Port 1
+		strcpy(args->port1, token1); // get Port 1
 
 		strcpy(args->ip2, strtok(token2, ":")); // get IP 2
 		strcpy(args->port2, strtok(NULL, ":")); // get Port 2
 
-		printf("%s - %s - %s - %s This Stuff \n", args->ip1, args->port1, args->ip2, args->port2);
+		printf("%s - %s - %s This Stuff \n", args->port1, args->ip2, args->port2);
 
 		if(pthread_create(newthread, NULL, &tprocess, (void *)args) != 0) // make new thread to deal with each pairing
 		{
 			if(errno == EAGAIN)
 			{
 				perror("Error Occured with Thread Creation");
-				exit(1);		    		
+				exit(1);
 			}
 		}
 	}
@@ -118,16 +117,10 @@ int main(int argc, char **argv)
 void* tprocess(void *arguments)
 {
 	struct targs *targs = (struct targs*)arguments; // arguments should be equal to what is printed off above, but it is getting weird
-	ssize_t ret_bytes, n; // returned bytes
-	char *bp, t_rbuf[BUFLEN];
-	int bytes_to_read;
-
-	int flags; // used for getting/setting flags on sockets
 	int l_sockd, r_sockd, new_sockd; // Socket variables
-	int l_client_len, r_client_len;
-	struct sockaddr_in l_server, l_client, r_server, r_client; // More Socket variables
+	struct sockaddr_in l_server, r_server; // More Socket variables
 
-	printf("%s - %s - %s - %s ^^^^ This Stuff \n", targs->ip1, targs->port1, targs->ip2, targs->port2);
+	printf("%s - %s - %s ^^^^ This Stuff \n", targs->port1, targs->ip2, targs->port2);
 
 /* ---- Left Port ---- */
 	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
@@ -150,7 +143,7 @@ void* tprocess(void *arguments)
 	bzero((char *)&l_server, sizeof(struct sockaddr_in));
 	l_server.sin_family = AF_INET;
 	l_server.sin_port = htons(atol(targs->port1));  // Flip the bits for the weird intel chip processing
-	l_server.sin_addr.s_addr = htonl(INADDR_ANY); // Accept addresses from anybody
+	l_server.sin_addr.s_addr = INADDR_ANY; // Accept addresses from anybody
 
 	// Bind new socket to port
 	if(bind(l_sockd, (struct sockaddr *)&l_server, sizeof(l_server)) == -1)
@@ -158,152 +151,76 @@ void* tprocess(void *arguments)
 		perror("Cannot bind to socket");
 		exit(1);
 	}
-/* ---- Right Port ---- */
-	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
-	fprintf(stdout, "Opening server on Port %ld\n", atol(targs->port2));
+	while(1){
+		listen(l_sockd, LISTEN_QUOTA);// cause we like the NSA over here
 
-	// Create socket
-	if((r_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-	{
-		// Error in Socket creation
-		perror("Socket failed to be created");
-		exit(1);
-	}
+		/*end of left port*/
 
-	if(setsockopt(r_sockd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
-	{
-    	perror("setsockopt(SO_REUSEADDR) failed");
-	}
+		new_sockd = accept(l_sockd,NULL,NULL);
+		/* ---- Right Port ---- */
 
-	// Zero out and create memory for the server struct
-	bzero((char *)&r_server, sizeof(struct sockaddr_in));
-	r_server.sin_family = AF_INET;
-	r_server.sin_port = htons(atol(targs->port2));  // Flip the bits for the weird intel chip processing
-	r_server.sin_addr.s_addr = htonl(INADDR_ANY); // Accept addresses from anybody
-
-	// Bind new socket to port
-	if(bind(r_sockd, (struct sockaddr *)&r_server, sizeof(r_server)) == -1)
-	{
-		perror("Cannot bind to socket");
-		exit(1);
-	}
-
-/* ---- Set Socket Flags ---- */
-	if((flags = fcntl(l_sockd, F_GETFL, 0)) < 0) // Get Socket Descriptor flags
-	{
-		perror("Could not get Sock Desc Flags");
-		exit(1);
-	}
-	if(fcntl(l_sockd, F_SETFL, flags | O_NONBLOCK) < 0) // Set Socket Flag to Non-Block, OR new flag as to not override the other flags
-	{
-		perror("Could not set Sock Desc Flags");
-		exit(1);
-	}
-	if((flags = fcntl(r_sockd, F_GETFL, 0)) < 0) // Get Socket Descriptor flags
-	{
-		perror("Could not get Sock Desc Flags");
-		exit(1);
-	}
-	if(fcntl(r_sockd, F_SETFL, flags | O_NONBLOCK) < 0) // Set Socket Flag to Non-Block, OR new flag as to not override the other flags
-	{
-		perror("Could not set Sock Desc Flags");
-		exit(1);
-	}
-
-/* ---- Start Listening ---- */
-
-	listen(l_sockd, LISTEN_QUOTA);
-	listen(r_sockd, LISTEN_QUOTA);
-
-	while(1)
-	{
-		l_client_len = sizeof(l_client);
-		r_client_len = sizeof(r_client);
-
-		// accept new client 
-		if((new_sockd = accept4(l_sockd, (struct sockaddr *) &l_client, &l_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #1
+		if((r_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 		{
-			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
-
-			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip1) == 0)
-			{
-				while((ret_bytes = splice(new_sockd, NULL, r_sockd, NULL, BUFLEN, NULL)) != 0) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
-				{
-					// Keep splicing socket data until end of input
-					n += ret_bytes; // keep track of amount sent, could use later to send bulk amount
-				}
-				if(ret_bytes == -1)
-				{
-					perror("Splice Failed"); // if splice doesn't work, sendfile() could be a good alternative
-					// Could fail because one file desc here isn't a pipe
-					exit(1);
-				}
-			}
-			
+			// Error in Socket creation
+			perror("RIGHT SOCKET_Socket failed to be created");
+			exit(1);
 		}
 
-		// accept new client 
-		if((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
+		if(setsockopt(r_sockd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
 		{
-			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
-
-			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0)
-			{
-				if((ret_bytes = splice(new_sockd, NULL, l_sockd, NULL, BUFLEN, NULL)) == -1) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
-				{
-					perror("Splice Failed");
-					// Could fail because one file desc here isn't a pipe
-					exit(1);
-				}
-			}
-
-		}
-	
-/* ---- Test Block ---- *
-
-		if(((new_sockd = accept4(l_sockd, (struct sockaddr *) &l_client, &l_client_len, SOCK_NONBLOCK)) != -1) 
-			|| ((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1)) // If any connecton between these two
-		{
-			if((strcmp(inet_ntoa(l_client.sin_addr), targs->ip1) == 0)
-				|| (strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0))
-			{
-				while(1)
-				{
-					while(splice(new_sockd, NULL, l_sockd, NULL, BUFLEN, NULL) != 0) // if we want non_block -> SPLICE_F_NONBLOCK
-					{
-						
-					}
-				}	
-
-			}
+    		perror("setsockopt(SO_REUSEADDR) failed");
 		}
 
-*/
-
-/*
-		if((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
+		// Zero out and create memory for the server struct
+		bzero((char *)&r_server, sizeof(struct sockaddr_in));
+		r_server.sin_family = AF_INET;
+		r_server.sin_port = htons(atol(targs->port2));  // Flip the bits for the weird intel chip processing
+		inet_aton(targs->ip2, &r_server.sin_addr);
+		// Bind new socket to port
+		if(connect(r_sockd, (struct sockaddr *)&r_server, sizeof(r_server)) == -1)
 		{
-			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
-
-			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0)
-			{
-				bp = t_rbuf;
-				bytes_to_read = BUFLEN;
-				while ((n = read(r_sockd, bp, bytes_to_read)) > 0)
-				{
-					bp += n;
-					bytes_to_read -= n;
-				}
-				write(l_sockd, t_rbuf, BUFLEN);   // echo to client
-
-
-			}
+			perror("Cannot bind to socket");
+			exit(1);
 		}
-*/
+		if(fork() == 0){//ready to make a baby baby
+			if(fork() == 0 ){ // the baby had a baby omg how does this even happen :O
+				//younger child do work
+				readwrite(new_sockd,r_sockd);
+				exit(0);
+			}else{
+				// older child do work?
+				readwrite(r_sockd,new_sockd);
+				exit(0);
+			}
+			exit(0);
+		}
 	}
-
 	return 0;
 }
+
+void readwrite(int src_sock,int dest_sock){
+	char buf[BUFLEN];
+	int a,j,i;
+
+	a = read(src_sock, buf, BUFLEN);
+
+	while (a > 0) {
+        i = 0;
+
+        while (i < a) {
+            j = write(dest_sock, buf + i, a - i);
+
+            i += j;
+        }
+
+        a = read(src_sock, buf, BUFLEN);
+	}
+	close(src_sock);
+	close(dest_sock);
+	exit(0);
+}
+
+
 
 // Handles Signal Interputs
 void sigHandler(int sigNum)
@@ -311,7 +228,7 @@ void sigHandler(int sigNum)
 	switch(sigNum)
 	{
 		case SIGINT:
-			signal(SIGINT, sigHandler); // reset in case later we do more stuff 
+			signal(SIGINT, sigHandler); // reset in case later we do more stuff
 			printf("\nMain Program Closing...\n");
 
 			exit(0);
