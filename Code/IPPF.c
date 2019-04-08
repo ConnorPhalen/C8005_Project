@@ -170,7 +170,7 @@ void* tprocess(void *arguments)
 		exit(1);
 	}
 
-	if (setsockopt(r_sockd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
+	if(setsockopt(r_sockd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
 	{
     	perror("setsockopt(SO_REUSEADDR) failed");
 	}
@@ -227,22 +227,20 @@ void* tprocess(void *arguments)
 
 			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip1) == 0)
 			{
-				while((ret_bytes = splice(new_sockd, 0, r_sockd, 0, BUFLEN, 0)) != 0) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
+				while((ret_bytes = splice(new_sockd, NULL, r_sockd, NULL, BUFLEN, NULL)) != 0) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
 				{
 					// Keep splicing socket data until end of input
 					n += ret_bytes; // keep track of amount sent, could use later to send bulk amount
 				}
 				if(ret_bytes == -1)
 				{
-					perror("Spilce Failed");
+					perror("Splice Failed"); // if splice doesn't work, sendfile() could be a good alternative
 					// Could fail because one file desc here isn't a pipe
 					exit(1);
 				}
 			}
 			
 		}
-
-		printf("Dos\n");
 
 		// accept new client 
 		if((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
@@ -251,18 +249,38 @@ void* tprocess(void *arguments)
 
 			if(strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0)
 			{
-				if((ret_bytes = splice(new_sockd, 0, l_sockd, 0, BUFLEN, 0)) == -1) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
+				if((ret_bytes = splice(new_sockd, NULL, l_sockd, NULL, BUFLEN, NULL)) == -1) // Will this block?? Also, cause use flag "SPLICE_F_MORE" if we can work it properly
 				{
-					perror("Spilce Failed");
+					perror("Splice Failed");
 					// Could fail because one file desc here isn't a pipe
 					exit(1);
 				}
 			}
 
 		}
-		printf("Quatro\n");
 	
-/* Test Block *
+/* ---- Test Block ---- *
+
+		if(((new_sockd = accept4(l_sockd, (struct sockaddr *) &l_client, &l_client_len, SOCK_NONBLOCK)) != -1) 
+			|| ((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1)) // If any connecton between these two
+		{
+			if((strcmp(inet_ntoa(l_client.sin_addr), targs->ip1) == 0)
+				|| (strcmp(inet_ntoa(l_client.sin_addr), targs->ip2) == 0))
+			{
+				while(1)
+				{
+					while(splice(new_sockd, NULL, l_sockd, NULL, BUFLEN, NULL) != 0) // if we want non_block -> SPLICE_F_NONBLOCK
+					{
+						
+					}
+				}	
+
+			}
+		}
+
+*/
+
+/*
 		if((new_sockd = accept4(r_sockd, (struct sockaddr *) &r_client, &r_client_len, SOCK_NONBLOCK)) != -1) // Port and IP #2
 		{
 			printf("IP %s connected on port %s\n", inet_ntoa(l_client.sin_addr), targs->port1);
