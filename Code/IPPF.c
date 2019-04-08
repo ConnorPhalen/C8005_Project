@@ -72,22 +72,19 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	while(fgets(rbuf, sizeof(rbuf), fr)) // read file line-by-line
+	while(fgets(rbuf, sizeof(rbuf), fr)) // Read .conf file line-by-line
 	{
-		printf("Line Characters %s\n", rbuf);
 
-		pthread_t *newthread = calloc(1, sizeof(pthread_t)); // new thread for each line
-		struct targs *args 	 = calloc(1, sizeof(struct targs)); // each thread has a few of arguments
+		pthread_t *newthread = calloc(1, sizeof(pthread_t)); // New thread for each forwarding 
+		struct targs *args 	 = calloc(1, sizeof(struct targs)); // Each thread needs to have a few variables passed over
 
 		token1 = strtok(rbuf, "-"); // Port #1
-		token2 = strtok(NULL, "-"); // IP-Port Pair #2
+		token2 = strtok(NULL, "-"); // IP-Port Pair to forwaard to
 
 		strcpy(args->port1, token1); // get Port 1
 
 		strcpy(args->ip2, strtok(token2, ":")); // get IP 2
 		strcpy(args->port2, strtok(NULL, ":")); // get Port 2
-
-		printf("%s - %s - %s This Stuff \n", args->port1, args->ip2, args->port2);
 
 		if(pthread_create(newthread, NULL, &tprocess, (void *)args) != 0) // make new thread to deal with each pairing
 		{
@@ -99,15 +96,13 @@ int main(int argc, char **argv)
 		}
 	}
 
-/* ---- Forwarding Setup ---- */
 	signal(SIGINT, sigHandler); // All Signal Interputs get pushed to sigintHandler
+	fclose(fr); // Close thise, as we do not need to read the .conf file anymore
 
 	while(1)
 	{
-
+		// loop here to prevent thread closure due to parent's death
 	}
-
-	fclose(fr);
 	return 0;
 }
 
@@ -116,17 +111,13 @@ int main(int argc, char **argv)
 // Output - N/A
 void* tprocess(void *arguments)
 {
-	struct targs *targs = (struct targs*)arguments; // arguments should be equal to what is printed off above, but it is getting weird
+	struct targs *targs = (struct targs*)arguments; // store submitted args
 	int l_sockd, r_sockd, new_sockd; // Socket variables
 	struct sockaddr_in l_server, r_server; // More Socket variables
 
-	printf("%s - %s - %s ^^^^ This Stuff \n", targs->port1, targs->ip2, targs->port2);
+	fprintf(stdout, "Listening on Port %ld\n", atol(targs->port1));
 
-/* ---- Left Port ---- */
-	// Setup each thread to listen to ports. then splice data between each of these sockets, or something like that.
-	fprintf(stdout, "Opening server on Port %ld\n", atol(targs->port1));
-
-	// Create socket
+	// Create listening socket
 	if((l_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 	{
 		// Error in Socket creation
@@ -152,13 +143,9 @@ void* tprocess(void *arguments)
 		exit(1);
 	}
 	while(1){
-		listen(l_sockd, LISTEN_QUOTA);// cause we like the NSA over here
-
-		/*end of left port*/
+		listen(l_sockd, LISTEN_QUOTA); // Setup main port listening socket
 
 		new_sockd = accept(l_sockd,NULL,NULL);
-		/* ---- Right Port ---- */
-
 		if((r_sockd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 		{
 			// Error in Socket creation
@@ -175,21 +162,20 @@ void* tprocess(void *arguments)
 		bzero((char *)&r_server, sizeof(struct sockaddr_in));
 		r_server.sin_family = AF_INET;
 		r_server.sin_port = htons(atol(targs->port2));  // Flip the bits for the weird intel chip processing
-		inet_aton(targs->ip2, &r_server.sin_addr);
-		// Bind new socket to port
+		inet_aton(targs->ip2, &r_server.sin_addr); // Specify only the IP to forward to
+
+		// Connect 
 		if(connect(r_sockd, (struct sockaddr *)&r_server, sizeof(r_server)) == -1)
 		{
 			perror("Cannot bind to socket");
 			exit(1);
 		}
-		if(fork() == 0){//ready to make a baby baby
-			if(fork() == 0 ){ // the baby had a baby omg how does this even happen :O
-				//younger child do work
-				readwrite(new_sockd,r_sockd);
+		if(fork() == 0){ // Forked Process will deal with forwarding data
+			if(fork() == 0 ){  // Two new processes, each will deal with one flow/direction
+				readwrite(new_sockd,r_sockd); // Forward from connecting machine to destination
 				exit(0);
 			}else{
-				// older child do work?
-				readwrite(r_sockd,new_sockd);
+				readwrite(r_sockd,new_sockd);// Forward from destination to connecting machine
 				exit(0);
 			}
 			exit(0);
@@ -202,25 +188,22 @@ void readwrite(int src_sock,int dest_sock){
 	char buf[BUFLEN];
 	int a,j,i;
 
-	a = read(src_sock, buf, BUFLEN);
+	a = read(src_sock, buf, BUFLEN); // read in data from source socket
 
-	while (a > 0) {
+	while (a > 0) { // a == 0 when at end of input
         i = 0;
 
         while (i < a) {
-            j = write(dest_sock, buf + i, a - i);
+            j = write(dest_sock, buf + i, a - i); // write data to forward dest socket
 
             i += j;
         }
-
-        a = read(src_sock, buf, BUFLEN);
+        a = read(src_sock, buf, BUFLEN); // keep reading data,a s there may be more data
 	}
 	close(src_sock);
 	close(dest_sock);
 	exit(0);
 }
-
-
 
 // Handles Signal Interputs
 void sigHandler(int sigNum)
@@ -230,6 +213,7 @@ void sigHandler(int sigNum)
 		case SIGINT:
 			signal(SIGINT, sigHandler); // reset in case later we do more stuff
 			printf("\nMain Program Closing...\n");
+			// Need to get it so we can close the calloc'd threads on CTRL+C shutdown
 
 			exit(0);
 			break;
